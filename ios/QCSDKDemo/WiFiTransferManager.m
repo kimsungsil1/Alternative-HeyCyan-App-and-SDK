@@ -10,13 +10,20 @@
 #import "MediaGalleryViewController.h"
 #import <QCSDK/QCSDKCmdCreator.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
+#import <CoreLocation/CoreLocation.h>
 
-@interface WiFiTransferManager ()
+@interface WiFiTransferManager () <CLLocationManagerDelegate>
 
 @property (nonatomic, strong) GlassesMediaDownloader *mediaDownloader;
 @property (nonatomic, copy) NSString *glassesDeviceIP;
 @property (nonatomic, copy) NSString *glassesSSID;
 @property (nonatomic, copy) NSString *glassesPassword;
+@property (nonatomic, assign) NSInteger connectionVerificationAttempts;
+@property (nonatomic, strong) CLLocationManager *locationManager;
+@property (nonatomic, assign) BOOL locationPermissionRequested;
+@property (nonatomic, assign) BOOL locationPermissionDenied;
+@property (nonatomic, assign) BOOL pendingConnectionProbeWithoutLocation;
+@property (nonatomic, assign) NSInteger configurationReapplyCount;
 
 @end
 
@@ -28,6 +35,74 @@
         _delegate = delegate;
     }
     return self;
+}
+
+- (void)requestLocationPermissionIfNeeded {
+    if (![CLLocationManager locationServicesEnabled]) {
+        NSLog(@"⚠️ Location services are disabled. WiFi status checks may be limited.");
+        self.locationPermissionDenied = YES;
+        return;
+    }
+
+    CLAuthorizationStatus status;
+    if (@available(iOS 14.0, *)) {
+        status = [CLLocationManager authorizationStatus];
+    } else {
+        status = [CLLocationManager authorizationStatus];
+    }
+
+    switch (status) {
+        case kCLAuthorizationStatusAuthorizedAlways:
+        case kCLAuthorizationStatusAuthorizedWhenInUse:
+            self.locationPermissionDenied = NO;
+            self.pendingConnectionProbeWithoutLocation = NO;
+            return;
+        case kCLAuthorizationStatusNotDetermined: {
+            if (!self.locationManager) {
+                self.locationManager = [[CLLocationManager alloc] init];
+                self.locationManager.delegate = self;
+            }
+            if (!self.locationPermissionRequested) {
+                self.locationPermissionRequested = YES;
+                dispatch_async(dispatch_get_main_queue(), ^{
+                    [self.locationManager requestWhenInUseAuthorization];
+                });
+            }
+            break;
+        }
+        case kCLAuthorizationStatusRestricted:
+        case kCLAuthorizationStatusDenied:
+            self.locationPermissionDenied = YES;
+            NSLog(@"⚠️ Location permission denied. Unable to confirm WiFi connection state.");
+            break;
+    }
+}
+
+- (void)locationManagerDidChangeAuthorization:(CLLocationManager *)manager API_AVAILABLE(ios(14.0)) {
+    CLAuthorizationStatus status = manager.authorizationStatus;
+    [self handleLocationAuthorizationStatus:status];
+}
+
+- (void)locationManager:(CLLocationManager *)manager didChangeAuthorizationStatus:(CLAuthorizationStatus)status {
+    [self handleLocationAuthorizationStatus:status];
+}
+
+- (void)handleLocationAuthorizationStatus:(CLAuthorizationStatus)status {
+    switch (status) {
+        case kCLAuthorizationStatusAuthorizedAlways:
+        case kCLAuthorizationStatusAuthorizedWhenInUse:
+            self.locationPermissionDenied = NO;
+            self.pendingConnectionProbeWithoutLocation = NO;
+            break;
+        case kCLAuthorizationStatusRestricted:
+        case kCLAuthorizationStatusDenied:
+            self.locationPermissionDenied = YES;
+            NSLog(@"⚠️ Location permission denied. WiFi join verification limited.");
+            break;
+        case kCLAuthorizationStatusNotDetermined:
+        default:
+            break;
+    }
 }
 
 #pragma mark - Main WiFi Transfer Methods
@@ -98,6 +173,10 @@
     __weak typeof(self) weakSelf = self;
     [self.delegate wifiTransferManager:self didUpdateStatus:@"Preparing glasses for WiFi transfer..."];
 
+    [self requestLocationPermissionIfNeeded];
+    self.pendingConnectionProbeWithoutLocation = NO;
+    self.configurationReapplyCount = 0;
+
     // MARK: - HEYCYAN WiFi TRANSFER SEQUENCE
     // This is the documented HeyCyan Bluetooth-first WiFi transfer sequence
     // DO NOT MODIFY without updating documentation and testing all steps
@@ -145,6 +224,9 @@
         NSLog(@"🔥 SUCCESS: Glasses enabled WiFi transfer mode");
         NSLog(@"📶 Hotspot SSID: %@", ssid ?: @"(none)");
         NSLog(@"🔐 Password: %@", password ?: @"(none)");
+
+        strongSelf.glassesSSID = ssid;
+        strongSelf.glassesPassword = password;
 
         // STEP 4: Receive Credentials - Got SSID and password successfully
         // STEP 6: Wait for Hotspot Ready - CRITICAL Bluetooth synchronization step
@@ -210,9 +292,12 @@
 
                         // CRITICAL: Wait for hotspot to actually start broadcasting before iOS configuration
                         NSLog(@"⏳ Waiting 5 seconds for hotspot to actually start broadcasting...");
+        
                         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-                            // Verify hotspot is actually broadcasting by scanning for it
-                            [strongSelf verifyHotspotIsBroadcasting:ssid deviceIP:ipAddress retry:0];
+                            [strongSelf confirmHotspotIsBroadcastingOverBluetooth:ssid
+                                                                           password:password
+                                                                           deviceIP:ipAddress
+                                                                              retry:0];
                         });
 
                     } else {
@@ -276,8 +361,8 @@
             configuration = [[NEHotspotConfiguration alloc] initWithSSID:ssid];
         }
 
-        // Single-use configuration - let iOS handle the rest
-        configuration.joinOnce = YES;
+        // Persist configuration during retry window so iOS can continue attempting association
+        configuration.joinOnce = NO;
 
         if (@available(iOS 13.0, *)) {
             configuration.lifeTimeInDays = @1;
@@ -287,6 +372,8 @@
 
         __weak typeof(self) weakSelf = self;
 
+        self.configurationReapplyCount = 0;
+
         // Clear any existing configurations for this SSID first
         NSLog(@"🧹 Clearing any existing configurations for SSID: %@", ssid);
         [[NEHotspotConfigurationManager sharedManager] removeConfigurationForSSID:ssid];
@@ -294,7 +381,7 @@
         NSLog(@"🔧 Applying NEHotspotConfiguration...");
         NSLog(@"📶 SSID: %@", ssid);
         NSLog(@"🔑 Password: %@", password.length > 0 ? @"[REDACTED]" : @"[NONE]");
-        NSLog(@"🔧 joinOnce: YES");
+        NSLog(@"🔧 joinOnce: NO (persist during transfer)");
 
         [[NEHotspotConfigurationManager sharedManager] applyConfiguration:configuration
                                                      completionHandler:^(NSError * _Nullable error) {
@@ -327,10 +414,12 @@
                                 [strongSelf.delegate wifiTransferManager:strongSelf didUpdateStatus:@"Device verified! Testing connection..."];
 
                                 // STEP 11: Wait for Connection - Give iOS time to establish WiFi connection
-                                // iOS needs time to actually join the network after NEHotspotConfiguration
-                                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                                // In WiFi-dense environments, iOS needs time to find the right network among many
+                                // Extended delay to handle areas with many competing WiFi networks
+                                strongSelf.connectionVerificationAttempts = 0;
+                                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(15.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                                     // STEP 11.5: Verify iOS actually connected to the WiFi network before testing
-                                    NSLog(@"🔍 Verifying iOS actually joined the WiFi network...");
+                                    NSLog(@"🔍 Verifying iOS actually joined the WiFi network after 15-second delay (WiFi-dense area)...");
                                     [strongSelf checkIfiOSConnectedToWiFi:ssid deviceIP:deviceIP];
                                 });
 
@@ -466,7 +555,82 @@
 }
 
 - (void)checkIfiOSConnectedToWiFi:(NSString *)expectedSSID deviceIP:(NSString *)deviceIP {
-    // Check if iOS actually connected to the expected WiFi network
+    self.connectionVerificationAttempts += 1;
+    NSInteger attempt = self.connectionVerificationAttempts;
+    const NSInteger maxAttempts = 6;
+    const NSTimeInterval retryDelaySeconds = 5.0;
+
+    __weak typeof(self) weakSelf = self;
+
+    void (^scheduleRetry)(NSString *) = ^(NSString *logMessage) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) { return; }
+
+        if (logMessage.length > 0) {
+            NSLog(@"%@", logMessage);
+        }
+
+        if (strongSelf.locationPermissionDenied) {
+            [strongSelf.delegate wifiTransferManager:strongSelf didUpdateStatus:@"Location permission is required to verify WiFi connection automatically. Please enable location access for QCSDKDemo in Settings."];
+            if (!strongSelf.pendingConnectionProbeWithoutLocation && deviceIP.length > 0 && attempt >= maxAttempts) {
+                strongSelf.pendingConnectionProbeWithoutLocation = YES;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    strongSelf.pendingConnectionProbeWithoutLocation = NO;
+                    [strongSelf testConnectionToDevice:deviceIP];
+                });
+            }
+        }
+
+        if (attempt < maxAttempts) {
+            [strongSelf reapplyHotspotConfigurationIfEligibleForAttempt:attempt
+                                                             expectedSSID:expectedSSID
+                                                                 password:strongSelf.glassesPassword
+                                                             maxAttempts:maxAttempts];
+
+            NSString *status = [NSString stringWithFormat:@"Waiting for iOS to join %@ (%ld/%ld)...",
+                                 expectedSSID ?: @"hotspot",
+                                 (long)attempt,
+                                 (long)maxAttempts];
+            [strongSelf.delegate wifiTransferManager:strongSelf didUpdateStatus:status];
+
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(retryDelaySeconds * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                [strongSelf checkIfiOSConnectedToWiFi:expectedSSID deviceIP:deviceIP];
+            });
+        } else {
+            NSLog(@"❌ iOS did NOT connect to WiFi: %@ after %ld attempts", expectedSSID, (long)attempt);
+            [strongSelf.delegate wifiTransferManager:strongSelf didUpdateStatus:[NSString stringWithFormat:@"iOS didn't join %@ automatically. Please open Settings ▸ Wi-Fi and connect manually, then return to the app.", expectedSSID ?: @"the hotspot"]];
+        }
+    };
+
+    void (^handleConnectionSuccess)(void) = ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) { return; }
+
+        NSLog(@"🔗 iOS is connected to %@. Waiting briefly before testing network path...", expectedSSID);
+        [strongSelf.delegate wifiTransferManager:strongSelf didUpdateStatus:[NSString stringWithFormat:@"Connected to %@! Verifying connection...", expectedSSID ?: @"hotspot"]];
+        strongSelf.pendingConnectionProbeWithoutLocation = NO;
+        strongSelf.configurationReapplyCount = 0;
+
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [strongSelf testConnectionToDevice:deviceIP];
+        });
+    };
+
+    if (@available(iOS 14.0, *)) {
+        [NEHotspotNetwork fetchCurrentWithCompletionHandler:^(NEHotspotNetwork * _Nullable currentNetwork) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (currentNetwork && [currentNetwork.SSID isEqualToString:expectedSSID]) {
+                    handleConnectionSuccess();
+                } else {
+                    NSString *logMessage = currentNetwork ? [NSString stringWithFormat:@"📶 Currently joined WiFi: %@ (waiting for %@)", currentNetwork.SSID, expectedSSID] : @"📶 iOS has not reported a hotspot connection yet";
+                    scheduleRetry(logMessage);
+                }
+            });
+        }];
+        return;
+    }
+
+    // Fallback path for iOS 13
     CFArrayRef interfaces = CNCopySupportedInterfaces();
     BOOL isConnectedToCorrectWiFi = NO;
 
@@ -480,7 +644,6 @@
                 NSLog(@"📱 Current WiFi SSID: %@", currentSSID ?: @"(none)");
 
                 if (currentSSID && [currentSSID isEqualToString:expectedSSID]) {
-                    NSLog(@"✅ iOS successfully connected to WiFi: %@", currentSSID);
                     isConnectedToCorrectWiFi = YES;
                 }
 
@@ -490,72 +653,118 @@
         CFRelease(interfaces);
     }
 
-    if (!isConnectedToCorrectWiFi) {
-        NSLog(@"❌ iOS did NOT connect to WiFi: %@", expectedSSID);
-        NSLog(@"❌ iOS may have stayed on cellular or failed to join the network");
-
-        // Try to force iOS to show the "Use Without Internet" prompt by waiting longer
-        [self.delegate wifiTransferManager:self didUpdateStatus:@"iOS didn't join WiFi. Please check Settings and tap 'Use Without Internet' if prompted."];
-
-        // Wait additional time and try again
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            NSLog(@"🔄 Retrying connection check after additional wait...");
-            [self checkIfiOSConnectedToWiFi:expectedSSID deviceIP:deviceIP];
-        });
-        return;
+    if (isConnectedToCorrectWiFi) {
+        handleConnectionSuccess();
+    } else {
+        scheduleRetry(@"📶 iOS has not joined the hotspot yet (fallback check)");
     }
-
-    // If connected, proceed with connection testing
-    NSLog(@"🔗 iOS is connected to correct WiFi, testing connectivity...");
-    [self testConnectionToDevice:deviceIP];
 }
 
-- (void)verifyHotspotIsBroadcasting:(NSString *)ssid deviceIP:(NSString *)deviceIP retry:(NSInteger)retry {
+- (void)reapplyHotspotConfigurationIfEligibleForAttempt:(NSInteger)attempt
+                                             expectedSSID:(NSString *)expectedSSID
+                                                 password:(NSString *)password
+                                             maxAttempts:(NSInteger)maxAttempts {
+    if (@available(iOS 11.0, *)) {
+        if (self.locationPermissionDenied) {
+            return;
+        }
+        if (expectedSSID.length == 0) {
+            return;
+        }
+        if (attempt >= maxAttempts) {
+            return;
+        }
+        if (attempt < 2) {
+            return;
+        }
+        if (!(attempt == 2 || attempt == 4)) {
+            return;
+        }
+        if (self.configurationReapplyCount >= 2) {
+            return;
+        }
+
+        self.configurationReapplyCount += 1;
+
+        NEHotspotConfiguration *retryConfiguration = nil;
+        if (password.length > 0) {
+            retryConfiguration = [[NEHotspotConfiguration alloc] initWithSSID:expectedSSID
+                                                                   passphrase:password
+                                                                       isWEP:NO];
+        } else {
+            retryConfiguration = [[NEHotspotConfiguration alloc] initWithSSID:expectedSSID];
+        }
+        retryConfiguration.joinOnce = NO;
+        if (@available(iOS 13.0, *)) {
+            retryConfiguration.lifeTimeInDays = @1;
+        }
+
+        NSLog(@"🔁 Re-applying NEHotspotConfiguration for %@ (reapply #%ld)", expectedSSID, (long)self.configurationReapplyCount);
+
+        [[NEHotspotConfigurationManager sharedManager] applyConfiguration:retryConfiguration
+                                                         completionHandler:^(NSError * _Nullable error) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (!error || error.code == NEHotspotConfigurationErrorAlreadyAssociated) {
+                    NSLog(@"✅ Hotspot configuration reapply completed (%@)", !error ? @"success" : @"already associated");
+                } else {
+                    NSLog(@"❌ Hotspot configuration reapply failed: %@ (code %ld)", error.localizedDescription, (long)error.code);
+                }
+            });
+        }];
+    }
+}
+
+- (void)confirmHotspotIsBroadcastingOverBluetooth:(NSString *)ssid
+                                         password:(NSString *)password
+                                         deviceIP:(NSString *)deviceIP
+                                            retry:(NSInteger)retry {
     const NSInteger maxRetries = 3;
 
-    NSLog(@"🔍 Checking if hotspot %@ is actually broadcasting (attempt %ld/%ld)...", ssid, (long)(retry + 1), (long)(maxRetries));
+    NSLog(@"🔍 Verifying hotspot readiness via Bluetooth (attempt %ld/%ld)...", (long)(retry + 1), (long)maxRetries);
+    __weak typeof(self) weakSelf = self;
 
-    // Scan for available WiFi networks to see if our hotspot is actually visible
-    CFArrayRef interfaces = CNCopySupportedInterfaces();
-    BOOL hotspotFound = NO;
+    [QCSDKCmdCreator getDeviceWifiIPSuccess:^(NSString *confirmedIP) {
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) { return; }
 
-    if (interfaces) {
-        for (int i = 0; i < CFArrayGetCount(interfaces); i++) {
-            CFStringRef interface = CFArrayGetValueAtIndex(interfaces, i);
-            CFDictionaryRef networkInfo = CNCopyCurrentNetworkInfo(interface);
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (confirmedIP.length > 0) {
+                NSLog(@"🎉 SUCCESS: Bluetooth confirmed hotspot is active at %@", confirmedIP);
+                [strongSelf.delegate wifiTransferManager:strongSelf didUpdateStatus:[NSString stringWithFormat:@"Hotspot %@ is live. Configuring WiFi...", ssid]];
 
-            if (networkInfo) {
-                NSString *currentSSID = CFDictionaryGetValue(networkInfo, kCNNetworkInfoKeySSID);
-                if (currentSSID && [currentSSID isEqualToString:ssid]) {
-                    NSLog(@"✅ Found hotspot %@ in available networks!", ssid);
-                    hotspotFound = YES;
-                }
-                CFRelease(networkInfo);
+                [strongSelf configureWiFiConnection:ssid password:password deviceIP:confirmedIP];
+            } else if (retry < maxRetries - 1) {
+                NSLog(@"⚠️ Hotspot still initializing, retrying in 2s...");
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    [strongSelf confirmHotspotIsBroadcastingOverBluetooth:ssid
+                                                                   password:password
+                                                                   deviceIP:deviceIP
+                                                                      retry:retry + 1];
+                });
+            } else {
+                NSLog(@"❌ Hotspot never reported ready over Bluetooth after %ld attempts", (long)maxRetries);
+                [strongSelf.delegate wifiTransferManager:strongSelf didUpdateStatus:@"Hotspot never came online. Please retry transfer."];
             }
-        }
-        CFRelease(interfaces);
-    }
-
-    if (hotspotFound) {
-        NSLog(@"🎉 SUCCESS: Hotspot is broadcasting and visible to iOS");
-        [self.delegate wifiTransferManager:self didUpdateStatus:[NSString stringWithFormat:@"Found %@! Configuring iOS WiFi...", ssid]];
-
-        // Proceed with WiFi configuration now that we know hotspot is actually broadcasting
-        // Note: We need to retrieve the password that was stored earlier
-        [self configureWiFiConnection:ssid password:self.glassesPassword deviceIP:deviceIP];
-    } else if (retry < maxRetries - 1) {
-        NSLog(@"⚠️ Hotspot %@ not found in available networks, retrying...", ssid);
-        [self.delegate wifiTransferManager:self didUpdateStatus:@"Waiting for hotspot to appear..."];
-
-        // Wait and retry hotspot detection
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
-            [self verifyHotspotIsBroadcasting:ssid deviceIP:deviceIP retry:retry + 1];
         });
-    } else {
-        NSLog(@"❌ FAILED: Hotspot %@ never appeared in WiFi scans after %ld attempts", ssid, (long)(maxRetries));
-        NSLog(@"❌ This indicates the glasses WiFi hotspot failed to actually start broadcasting");
-        [self.delegate wifiTransferManager:self didUpdateStatus:@"❌ ERROR: Glasses WiFi hotspot failed to start. Please try again."];
-    }
+    } failed:^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf) { return; }
+
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (retry < maxRetries - 1) {
+                NSLog(@"⚠️ Bluetooth IP fetch failed, retrying in 2s...");
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    [strongSelf confirmHotspotIsBroadcastingOverBluetooth:ssid
+                                                                   password:password
+                                                                   deviceIP:deviceIP
+                                                                      retry:retry + 1];
+                });
+            } else {
+                NSLog(@"❌ Unable to confirm hotspot readiness via Bluetooth");
+                [strongSelf.delegate wifiTransferManager:strongSelf didUpdateStatus:@"Failed to confirm hotspot readiness over Bluetooth. Please retry."];
+            }
+        });
+    }];
 }
 
 - (void)testConnectionToDevice:(NSString *)deviceIP {

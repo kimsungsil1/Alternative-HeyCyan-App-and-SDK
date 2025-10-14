@@ -24,6 +24,8 @@
 		AA13172B2E31290900B03938 /* QCSDK.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = AA1317282E3128F300B03938 /* QCSDK.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		AA9999A22E40000000B03938 /* GlassesMediaDownloader.m in Sources */ = {isa = PBXBuildFile; fileRef = AA9999A12E40000000B03938 /* GlassesMediaDownloader.m */; };
 		BB9E74E1FE /* MediaGalleryViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = BB48D45A88 /* MediaGalleryViewController.m */; };
+		AA7777032E99ABCD00B03938 /* SceneDelegate.m in Sources */ = {isa = PBXBuildFile; fileRef = AA7777022E99ABCD00B03938 /* SceneDelegate.m */; };
+		AA7777042E99ACCC00B03938 /* CoreLocation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AA7777052E99ACCC00B03938 /* CoreLocation.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -53,6 +55,8 @@
 		AA1313772E2F904500B03938 /* AppDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = AppDelegate.h; sourceTree = "<group>"; };
 		AA1313782E2F904500B03938 /* AppDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = AppDelegate.m; sourceTree = "<group>"; };
 		AA1313792E2F904500B03938 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AA7777012E99ABCD00B03938 /* SceneDelegate.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SceneDelegate.h; sourceTree = "<group>"; };
+		AA7777022E99ABCD00B03938 /* SceneDelegate.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SceneDelegate.m; sourceTree = "<group>"; };
 		AA13137A2E2F904500B03938 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		AA13137B2E2F904500B03938 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		AA13137D2E2F904500B03938 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
@@ -64,6 +68,7 @@
 		AA1317282E3128F300B03938 /* QCSDK.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = QCSDK.framework; sourceTree = SOURCE_ROOT; };
 		AA9999A02E40000000B03938 /* GlassesMediaDownloader.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = GlassesMediaDownloader.h; sourceTree = "<group>"; };
 		AA9999A12E40000000B03938 /* GlassesMediaDownloader.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = GlassesMediaDownloader.m; sourceTree = "<group>"; };
+		AA7777052E99ACCC00B03938 /* CoreLocation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreLocation.framework; path = System/Library/Frameworks/CoreLocation.framework; sourceTree = SDKROOT; };
 		BB48D45A88 /* MediaGalleryViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = MediaGalleryViewController.m; sourceTree = "<group>"; };
 		BBEA4D0FAD /* MediaGalleryViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MediaGalleryViewController.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -95,6 +100,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA13172A2E31290900B03938 /* QCSDK.framework in Frameworks */,
+				AA7777042E99ACCC00B03938 /* CoreLocation.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -134,6 +140,8 @@
 				AA1317282E3128F300B03938 /* QCSDK.framework */,
 				AA1313772E2F904500B03938 /* AppDelegate.h */,
 				AA1313782E2F904500B03938 /* AppDelegate.m */,
+				AA7777012E99ABCD00B03938 /* SceneDelegate.h */,
+				AA7777022E99ABCD00B03938 /* SceneDelegate.m */,
 				AA1313822E2F904500B03938 /* ViewController.h */,
 				AA1313832E2F904500B03938 /* ViewController.m */,
 				AA9999A02E40000000B03938 /* GlassesMediaDownloader.h */,
@@ -161,6 +169,7 @@
 			isa = PBXGroup;
 			children = (
 				AA13138E2E2F915600B03938 /* QCSDK.framework */,
+				AA7777052E99ACCC00B03938 /* CoreLocation.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -263,6 +272,7 @@
 				AA1313882E2F904500B03938 /* ViewController.m in Sources */,
 				AA9999A22E40000000B03938 /* GlassesMediaDownloader.m in Sources */,
 				BB9E74E1FE /* MediaGalleryViewController.m in Sources */,
+				AA7777032E99ABCD00B03938 /* SceneDelegate.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
