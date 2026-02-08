@@ -123,6 +123,7 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
     private var isAiHijackEnabled = true // Default to enabled
     private var isImageAssistantMode = true // Use assistant vs share intent
     private var aiAssistantMode = "Gemini" // "Gemini" or "ChatGPT"
+    private var isFlashDisabled = false
 
     // State used by the BLE+WiFi P2P data-download flow
     private var downloadP2pConnected = false
@@ -376,6 +377,14 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
                 }
 
                 binding.btnCamera -> {
+                    if (isFlashDisabled) {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Photo flash disabled; skipping shutter to save battery.",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                        return@setOnClickListener
+                    }
                     LargeDataHandler.getInstance().glassesControl(
                         byteArrayOf(0x02, 0x01, 0x01)
                     ) { _, it ->
@@ -522,6 +531,16 @@ class MainActivity : AppCompatActivity(), TextToSpeech.OnInitListener {
             val modeName = if (isChecked) "Direct Assistant" else "App Sharing"
             binding.cbImageAsAssistant.text = modeName
             Toast.makeText(this, "Image Hijack: $modeName", Toast.LENGTH_SHORT).show()
+        }
+
+        binding.cbDisableFlash.isChecked = isFlashDisabled
+        binding.cbDisableFlash.setOnCheckedChangeListener { _, isChecked ->
+            isFlashDisabled = isChecked
+            Toast.makeText(
+                this,
+                if (isChecked) "Photo flash disabled" else "Photo flash enabled",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
