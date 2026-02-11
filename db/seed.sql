@@ -1,0 +1,3 @@
+-- sample categories are controlled at app layer: 연애, 불안, 일상, 질문, 썰
+-- to promote an existing user to admin, run:
+-- update public.profiles set role = 'admin' where id = '<auth-user-uuid>';
