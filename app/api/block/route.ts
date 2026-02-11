@@ -1,0 +1,17 @@
+import { NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
+
+export async function POST(req: Request) {
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getUser();
+  if (!data.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const payload = await req.json();
+  const { error } = await supabase.from('blocks').insert({
+    blocker_id: data.user.id,
+    blocked_id: payload.blockedId
+  });
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  return NextResponse.json({ ok: true });
+}

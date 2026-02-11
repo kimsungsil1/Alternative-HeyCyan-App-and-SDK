@@ -1,253 +1,76 @@
-# HeyCyan Glasses SDK
+# 멘헤라 커뮤니티 MVP (Next.js + Supabase)
 
-Comprehensive SDKs for controlling HeyCyan smart glasses via Bluetooth Low Energy (BLE).
+익명 닉네임 기반의 한국어 커뮤니티 MVP입니다. 이 서비스는 **의학적 진단 서비스가 아니며**, 커뮤니티 참여 인증(작성 권한 인증)으로 운영됩니다.
 
-## Platform Support
+## 1) Supabase 설정
 
-- **iOS**: Full SDK available with demo application (see `ios/` directory)
-- **Android**: Full SDK available with demo application (see `android/` directory)
-- **Gemini/ChatGPT assistants**: Supported on **Android only** (via the Android sample app + Tasker automation)
+1. Supabase 프로젝트 생성
+2. SQL Editor에서 아래 순서대로 실행
+   - `db/schema.sql`
+   - `db/rls.sql`
+   - `db/seed.sql`
+3. Auth 설정
+   - Email/Password 활성화
+   - Email confirmation 활성화
+4. Redirect URL 설정
+   - 로컬: `http://localhost:3000/login`
+   - 운영: `https://<your-domain>/login`
 
-## Overview
+## 2) 환경변수
 
-This repository provides SDKs for developers to integrate HeyCyan smart glasses functionality into their applications. The glasses support photo capture, video recording, audio recording, and AI-powered image generation.
+`.env.local` 예시:
 
-## AI Assistants (Android Only)
-
-The Android sample app includes an optional integration to route assistant requests (e.g. Gemini or ChatGPT workflows) through Android automation.
-
-- **Android-only**: Gemini/ChatGPT assistant workflows are only supported on Android.
-- **Image queries require Tasker**: For image queries specifically, the app forwards the request to **Tasker** (paid automation app). You must have Tasker installed and the provided Tasker profile enabled.
-- **AutoInput required**: The Tasker automation relies on **Tasker AutoInput** (paid Tasker plugin) to drive the assistant UI.
-
-### Install The Tasker Profile (.xml)
-
-The Tasker profile will be provided in two places: this repo and TaskerNet.
-
-Option A: Import from TaskerNet (recommended)
-
-1. Install Tasker from Google Play.
-2. Open this TaskerNet link on your phone and import the profile:
-   - `https://taskernet.com/shares/?id=PLACEHOLDER_TASKERNET_LINK`
-3. In Tasker, ensure the imported profile is **enabled**.
-
-Option B: Import the .xml from this repository
-
-1. Download the profile XML to your phone:
-   - `tasker/HeyCyan_ImageQuery_Assistant.xml` (placeholder path)
-2. In Tasker, use the import feature (commonly: Menu > Data > Import) and select the downloaded `.xml`.
-3. Ensure the imported profile is **enabled**.
-
-## Features
-
-### Device Management
-- **Bluetooth LE Scanning**: Discover nearby HeyCyan glasses
-- **Connection Management**: Connect/disconnect and manage device state
-- **Device Information**: Retrieve hardware/firmware versions and MAC address
-
-### Media Controls
-- **Photo Capture**: Remote shutter control for taking photos
-- **Video Recording**: Start/stop video recording with status tracking
-- **Audio Recording**: Start/stop audio recording with status tracking
-- **AI Image Generation**: Trigger AI-powered image creation and receive generated images
-
-### Device Monitoring
-- **Battery Status**: Real-time battery level and charging state
-- **Media Counts**: Track number of photos, videos, and audio files on device
-- **Time Synchronization**: Set device time to match iOS device
-
-
-## Requirements
-
-### iOS
-
-- iOS 11.0+
-- Xcode 12.0+
-- Swift 5.0+ or Objective-C
-- Physical iOS device (Bluetooth not supported in simulator)
-
-### Android
-
-- Android Studio (latest stable recommended)
-- Android device with BLE
-
-## Installation
-
-### iOS
-
-1. Clone or download this repository
-2. Open `QCSDKDemo.xcodeproj` in Xcode
-3. Build and run on a physical iOS device
-
-### Android
-
-1. Clone or download this repository
-2. Open `android/` in Android Studio
-3. Build and run the sample app (see `android/CyanBridge/`)
-
-## Usage
-
-### Basic Implementation
-
-1. **Import the SDK**
-```objc
-#import <QCSDK/QCSDK.h>
+```bash
+NEXT_PUBLIC_SUPABASE_URL=...
+NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ```
 
-2. **Initialize SDK Manager**
-```objc
-[QCSDKManager shareInstance].delegate = self;
+Optional (Upstash rate limit 교체 시):
+
+```bash
+UPSTASH_REDIS_REST_URL=...
+UPSTASH_REDIS_REST_TOKEN=...
 ```
 
-3. **Scan for Devices**
-```objc
-[[QCCentralManager shared] scan];
+## 3) 실행
+
+```bash
+npm install
+npm run dev
 ```
 
-4. **Connect to Device**
-```objc
-[[QCCentralManager shared] connect:peripheral];
+## 4) Vercel 배포
+
+1. GitHub 저장소 연결
+2. Vercel 환경변수에 위 3개 추가
+3. 빌드 명령: `next build` (기본값)
+4. 배포 후 Supabase Auth redirect URL 운영 도메인 반영
+
+## 5) 관리자 승격
+
+Supabase SQL Editor:
+
+```sql
+update public.profiles
+set role = 'admin'
+where id = '<auth-user-uuid>';
 ```
 
-5. **Control Device**
-```objc
-// Take a photo
-[QCSDKCmdCreator setDeviceMode:QCOperatorDeviceModePhoto 
-                       success:^{ NSLog(@"Photo taken"); } 
-                          fail:^(NSInteger mode) { NSLog(@"Failed"); }];
+## 6) 인증(작성 권한) 동작
 
-// Get battery status
-[QCSDKCmdCreator getDeviceBattery:^(NSInteger battery, BOOL charging) {
-    NSLog(@"Battery: %ld%%, Charging: %@", battery, charging ? @"YES" : @"NO");
-} fail:^{ NSLog(@"Failed to get battery"); }];
-```
+- `/verify`에서
+  1) 12문항 자기 점검
+  2) 규칙 동의
+  3) 안전 서약
+- 완료 시 `profiles.is_verified_posting = true`
+- 결과는 **"Verified for posting"** 이며 진단/질병 라벨을 부여하지 않습니다.
 
-## API Reference
+## 7) 안전 기능 요약
 
-### QCSDKManager
-- Singleton instance for SDK management
-- Handles device data updates via delegate callbacks
-
-### QCSDKCmdCreator
-Key methods:
-- `getDeviceVersionInfo` - Get hardware/firmware versions
-- `getDeviceMacAddress` - Get device MAC address
-- `setupDeviceDateTime` - Sync device time
-- `getDeviceBattery` - Get battery level and charging status
-- `getDeviceMedia` - Get media file counts
-- `setDeviceMode` - Control device operations (photo/video/audio)
-
-### Device Modes
-- `QCOperatorDeviceModePhoto` - Take photo
-- `QCOperatorDeviceModeVideo` - Start video recording
-- `QCOperatorDeviceModeVideoStop` - Stop video recording
-- `QCOperatorDeviceModeAudio` - Start audio recording
-- `QCOperatorDeviceModeAudioStop` - Stop audio recording
-- `QCOperatorDeviceModeAIPhoto` - Generate AI image
-
-## Demo App
-
-The included demo application demonstrates all SDK features:
-
-1. **Search Screen**: Scan and list available devices
-2. **Feature Screen**: Control connected device with options for:
-   - Version information retrieval
-   - Time synchronization
-   - Battery status monitoring
-   - Media count tracking
-   - Photo/video/audio capture
-   - AI image generation
-
-## Permissions
-
-Add to your app's `Info.plist`:
-```xml
-<key>NSBluetoothAlwaysUsageDescription</key>
-<string>This app needs Bluetooth to connect to HeyCyan glasses</string>
-<key>NSBluetoothPeripheralUsageDescription</key>
-<string>This app needs Bluetooth to communicate with HeyCyan glasses</string>
-```
-
-## Proprietary Protocol Information
-
-This SDK encapsulates the proprietary BLE communication protocol for HeyCyan glasses. Without this SDK, developers would need to reverse-engineer the following:
-
-### BLE Service & Characteristic UUIDs (Found in Binary)
-- **Primary Service UUID**: `7905FFF0-B5CE-4E99-A40F-4B1E122D00D0`
-- **Secondary Service UUID**: `6e40fff0-b5a3-f393-e0a9-e50e24dcca9e`
-- **QCSDKSERVERUUID1**: Internal service identifier
-- **QCSDKSERVERUUID2**: Internal service identifier
-- **Command Characteristic**: Write characteristic for device commands
-- **Notification Characteristic**: For receiving device responses and status updates
-- **Data Transfer Characteristic**: For large data transfers (AI images)
-
-### Command Protocol Structure
-Each command follows a specific byte format:
-- **Header**: Command identifier bytes
-- **Payload**: Command-specific data
-- **Checksum**: Validation bytes
-- **Acknowledgment**: Required response format
-
-### Key Command Sequences (Examples)
-- **Take Photo**: `QCOperatorDeviceModePhoto` command with specific byte encoding
-- **Battery Status**: Request/response with battery level (0-100) and charging flag
-- **AI Image Transfer**: `QCOperatorDeviceModeAIPhoto` triggers multi-packet protocol
-- **Version Info**: Returns hardware version, firmware version, WiFi hardware/firmware versions
-- **Media Counts**: Returns photo count, video count, audio count as integers
-- **Video Control**: `QCOperatorDeviceModeVideo` / `QCOperatorDeviceModeVideoStop`
-- **Audio Control**: `QCOperatorDeviceModeAudio` / `QCOperatorDeviceModeAudioStop`
-
-### Authentication & Handshake
-- Initial pairing sequence
-- Session establishment protocol
-- Keep-alive requirements
-- Disconnection handling
-
-### Data Encoding Formats
-- **Battery Level**: NSInteger (0-100) with BOOL charging flag
-- **Media Counts**: NSInteger values for photo, video, audio counts
-- **Timestamp Format**: Uses iOS device time via `setupDeviceDateTime`
-- **Image Data**: NSData chunks received via `didReceiveAIChatImageData` delegate
-- **MAC Address**: String format returned by `getDeviceMacAddress`
-- **Version Strings**: Multiple version fields (hardware, firmware, WiFi versions)
-
-### State Management
-- **Connection States**: `QCStateUnbind`, `QCStateConnecting`, `QCStateConnected`, `QCStateDisconnecting`, `QCStateDisconnected`
-- **Bluetooth States**: Via `QCBluetoothState` enum
-- **Recording States**: Tracked via `recordingVideo` and `recordingAudio` flags
-- **Mode Restrictions**: Cannot record video and audio simultaneously
-- **Delegate Callbacks**: `QCSDKManagerDelegate` for battery, media updates, AI image data
-- **Error Handling**: Fail blocks return current device mode on mode switch failures
-
-Without this SDK, implementing device communication would require:
-1. BLE packet sniffing during device operations
-2. Reverse-engineering command structures through trial and error
-3. Implementing proper error handling for undocumented states
-4. Managing complex multi-packet data transfers
-5. Handling device-specific quirks and timing requirements
-
-## Troubleshooting
-
-- **Cannot find devices**: Ensure Bluetooth is enabled and glasses are in pairing mode
-- **Connection fails**: Check if glasses are already connected to another device
-- **Commands fail**: Ensure device is connected and not in use by another operation
-
-## License
-
-This SDK is proprietary software. Contact HeyCyan for licensing information.
-
-## Branches
-
-- **`main`** - Current development branch with improvements and modifications
-- **`manufacturer-original`** - Preserved original SDK from manufacturer (unmodified baseline)
-
-## Additional Documentation
-
-For more detailed technical information, see our GitHub issues:
-
-- **[Issue #1: Convert Objective-C SDK to Swift Library](https://github.com/ebowwa/HeyCyanGlassesSDK/issues/1)** - Comprehensive guide for creating a modern Swift wrapper with async/await, Combine, and SwiftUI support
-- **[Issue #2: Complete Device I/O Documentation](https://github.com/ebowwa/HeyCyanGlassesSDK/issues/2)** - Exhaustive documentation of every input/output operation with exact code examples and expected responses
-
-## Support
-
-For technical support or questions about the SDK, please contact the HeyCyan development team.
+- 전 페이지 위기 배너 + `/help` 연결
+- 게시/댓글 작성 중 안전 키워드 감지 시 인터스티셜 노출 후 수정 유도
+- 신고 기능(`reports`)
+- 사용자 차단(`blocks`)
+- 게시/댓글 쿨다운 기반 rate limit (단일 인스턴스 메모리 구현)
+- `/help`: 안내/placeholder 리소스, 실제 번호 임의 생성 없음
